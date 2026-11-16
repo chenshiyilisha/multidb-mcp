@@ -303,6 +303,16 @@
 - 无场景的能力（如过重的事务编排、Web 工作台、自然语言生成 SQL）不引入，可注明「不适用」及原因；
 - 本项目是 **stdio 本地工具**，多用户鉴权、OAuth、HTTP transport 等暂无场景，不引入。
 
+### 8.5 版本发布流程（0.2.0 起固化）
+
+本项目同时发布三个渠道，顺序固定，缺一不可：
+
+1. **npm**：`package.json` 升版本（`version` + `mcpName` 必须保留，`mcpName` 是官方 Registry 的所有权校验依据，值固定为 `io.github.chenshiyilisha/multidb-mcp`）→ 用户本人在自己终端跑 `npm publish`（2FA 必须本人操作，AI 沙箱内跑不了）。
+2. **GitHub**：提交推送（本机 SSH 22 不通，origin 已切 HTTPS + gh 凭据助手）；如有 Release 需求再打 tag。
+3. **官方 MCP Registry**（registry.modelcontextprotocol.io）：同步升 `server.json` 的 `version` 和 `packages[0].version`（必须与 npm 版本一致，版本号不可复用）→ `.tools/mcp-publisher.exe login github --token "$(gh auth token)"`（token 会过期，每次发布前重新登录）→ `.tools/mcp-publisher.exe publish`。发布后用 `curl "https://registry.modelcontextprotocol.io/v0/servers/io.github.chenshiyilisha/multidb-mcp"` 验证。
+
+下游目录（PulseMCP、Glama、Kiprio、GitHub MCP Registry 等）从官方 Registry 和 GitHub topics 自动同步，**不需要逐个提交**；Smithery 已于 2026-10-31 关闭提交通道，不要再花时间。
+
 ---
 
 ## 附：规范要点速查
