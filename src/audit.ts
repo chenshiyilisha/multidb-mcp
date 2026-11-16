@@ -22,6 +22,14 @@ export interface AuditRecord {
   truncated?: boolean;
   slow?: boolean;
   writeAttempt?: boolean;
+  /** Classified statement type (read/insert/update/delete/ddl/...). */
+  stmtType?: string;
+  /** Columns that were masked before the result was returned. */
+  maskedColumns?: string[];
+  /** True when the byte cap dropped one or more rows. */
+  truncatedByBytes?: boolean;
+  /** True when a per-call maxRows override was clamped to the connection cap. */
+  maxRowsClamped?: boolean;
 }
 
 function write(record: AuditRecord): void {
@@ -44,6 +52,10 @@ export function auditCall(
     truncated?: boolean;
     slow?: boolean;
     writeAttempt?: boolean;
+    stmtType?: string;
+    maskedColumns?: string[];
+    truncatedByBytes?: boolean;
+    maxRowsClamped?: boolean;
   }
 ): void {
   write({

@@ -1,0 +1,73 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.chenshiyilisha/multidb-mcp",
+  "title": "MultiDB MCP",
+  "description": "MCP server for Dameng (DM8), SQL Server, and MySQL — read-only by default, granular write perms",
+  "version": "0.2.0",
+  "websiteUrl": "https://github.com/chenshiyilisha/multidb-mcp",
+  "repository": {
+    "url": "https://github.com/chenshiyilisha/multidb-mcp",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "multidb-mcp",
+      "version": "0.2.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "MULTIDB_DB_TYPE",
+          "description": "Database type: dameng, sqlserver, or mysql",
+          "isRequired": true,
+          "isSecret": false
+        },
+        {
+          "name": "MULTIDB_HOST",
+          "description": "Database host",
+          "isRequired": true,
+          "isSecret": false
+        },
+        {
+          "name": "MULTIDB_PORT",
+          "description": "Database port (e.g. 5236 for Dameng, 1433 for SQL Server, 3306 for MySQL)",
+          "isRequired": true,
+          "isSecret": false
+        },
+        {
+          "name": "MULTIDB_USER",
+          "description": "Database user",
+          "isRequired": true,
+          "isSecret": false
+        },
+        {
+          "name": "MULTIDB_PASSWORD",
+          "description": "Database password",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "MULTIDB_SCHEMA",
+          "description": "Schema name for Dameng, or database name for SQL Server / MySQL",
+          "isRequired": true,
+          "isSecret": false
+        },
+        {
+          "name": "MULTIDB_READ_ONLY",
+          "description": "Read-only master switch. true = only SELECT/SHOW/DESCRIBE/EXPLAIN/WITH (default true)",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "MULTIDB_CONNECTIONS",
+          "description": "Optional JSON array for multiple connections (overrides single-connection vars, contains credentials)",
+          "isRequired": false,
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}

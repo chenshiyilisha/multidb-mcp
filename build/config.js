@@ -25,7 +25,61 @@ function parseIntSafe(v, fallback) {
     const n = Number.parseInt(v ?? '', 10);
     return Number.isFinite(n) && n > 0 ? n : fallback;
 }
+/** Timeouts accept an explicit 0 (disable the JS-side cap); other limits must be > 0. */
+function parseTimeout(v, fallback) {
+    if (v === undefined || v === '')
+        return fallback;
+    if (v.trim() === '0')
+        return 0;
+    return parseIntSafe(v, fallback);
+}
 const DEFAULT_QUERY_TIMEOUT_MS = 30000;
+/** 1 MiB — generous for normal results, but stops a single BLOB from flooding the model context. */
+const DEFAULT_MAX_RESULT_BYTES = 1024 * 1024;
+/** Matches the 50,000-char convention used by production database MCP servers. */
+const DEFAULT_MAX_QUERY_LENGTH = 50000;
+/**
+ * Parse masking rules from a JSON string with fail-closed validation.
+ * An invalid regex / unknown strategy aborts config load rather than silently
+ * shipping unmasked data (the same fail-closed principle as SQL classification).
+ */
+function parseMaskingRules(raw, source) {
+    if (!raw || !raw.trim())
+        return [];
+    let parsed;
+    try {
+        parsed = JSON.parse(raw);
+    }
+    catch (e) {
+        throw new Error(`${source} is not valid JSON: ${e.message}`);
+    }
+    if (!Array.isArray(parsed)) {
+        throw new Error(`${source} must be a JSON array of masking rules`);
+    }
+    return parsed.map((item, i) => {
+        const r = item;
+        const column = String(r.column ?? '');
+        if (!column)
+            throw new Error(`${source}[${i}].column is required`);
+        const strategy = String(r.strategy ?? 'fixed');
+        if (strategy !== 'fixed' && strategy !== 'null' && strategy !== 'partial') {
+            throw new Error(`${source}[${i}].strategy must be "fixed", "null" or "partial" (got "${strategy}")`);
+        }
+        try {
+            new RegExp(column, 'i');
+        }
+        catch (e) {
+            throw new Error(`${source}[${i}].column is not a valid regex: ${e.message}`);
+        }
+        const keepLast = r.keepLast === undefined ? 4 : parseIntSafe(String(r.keepLast), 4);
+        return {
+            column,
+            strategy: strategy,
+            value: r.value === undefined ? undefined : String(r.value),
+            keepLast,
+        };
+    });
+}
 function envConnection(name) {
     const type = (process.env.MULTIDB_DB_TYPE || 'dameng').toLowerCase();
     if (type !== 'dameng' && type !== 'sqlserver' && type !== 'mysql') {
@@ -40,8 +94,21 @@ function envConnection(name) {
         password: process.env.MULTIDB_PASSWORD || '',
         schema: process.env.MULTIDB_SCHEMA || process.env.MULTIDB_DATABASE || '',
         readOnly: parseBool(process.env.MULTIDB_READ_ONLY, true),
+        allowInsert: parseBool(process.env.MULTIDB_ALLOW_INSERT, false),
+        allowUpdate: parseBool(process.env.MULTIDB_ALLOW_UPDATE, false),
+        allowDelete: parseBool(process.env.MULTIDB_ALLOW_DELETE, false),
+        allowDdl: parseBool(process.env.MULTIDB_ALLOW_DDL, false),
         maxRows: parseIntSafe(process.env.MULTIDB_MAX_ROWS, 1000),
-        queryTimeoutMs: parseIntSafe(process.env.MULTIDB_QUERY_TIMEOUT_MS, DEFAULT_QUERY_TIMEOUT_MS),
+        queryTimeoutMs: parseTimeout(process.env.MULTIDB_QUERY_TIMEOUT_MS, DEFAULT_QUERY_TIMEOUT_MS),
+        maxResultBytes: (() => {
+            const raw = process.env.MULTIDB_MAX_RESULT_BYTES;
+            if (raw === undefined || raw === '')
+                return DEFAULT_MAX_RESULT_BYTES;
+            const n = Number.parseInt(raw, 10);
+            return Number.isFinite(n) && n >= 0 ? n : DEFAULT_MAX_RESULT_BYTES;
+        })(),
+        maxQueryLength: parseIntSafe(process.env.MULTIDB_MAX_QUERY_LENGTH, DEFAULT_MAX_QUERY_LENGTH),
+        maskingRules: parseMaskingRules(process.env.MULTIDB_MASKING_RULES, 'MULTIDB_MASKING_RULES'),
         description: process.env.MULTIDB_DESCRIPTION || undefined,
     };
 }
@@ -80,13 +147,20 @@ export function loadConnections() {
                 password: String(c.password || ''),
                 schema: String(c.schema || c.database || ''),
                 readOnly: parseBool(String(c.readOnly ?? ''), true),
+                allowInsert: parseBool(String(c.allowInsert ?? ''), false),
+                allowUpdate: parseBool(String(c.allowUpdate ?? ''), false),
+                allowDelete: parseBool(String(c.allowDelete ?? ''), false),
+                allowDdl: parseBool(String(c.allowDdl ?? ''), false),
                 maxRows: parseIntSafe(String(c.maxRows ?? ''), 1000),
-                queryTimeoutMs: (() => {
-                    const raw = String(c.queryTimeoutMs ?? '');
-                    if (raw === '' || raw === '0')
-                        return DEFAULT_QUERY_TIMEOUT_MS;
-                    return parseIntSafe(raw, DEFAULT_QUERY_TIMEOUT_MS);
+                queryTimeoutMs: parseTimeout(String(c.queryTimeoutMs ?? ''), DEFAULT_QUERY_TIMEOUT_MS),
+                maxResultBytes: (() => {
+                    if (c.maxResultBytes === undefined || c.maxResultBytes === '')
+                        return DEFAULT_MAX_RESULT_BYTES;
+                    const n = Number.parseInt(String(c.maxResultBytes), 10);
+                    return Number.isFinite(n) && n >= 0 ? n : DEFAULT_MAX_RESULT_BYTES;
                 })(),
+                maxQueryLength: parseIntSafe(String(c.maxQueryLength ?? ''), DEFAULT_MAX_QUERY_LENGTH),
+                maskingRules: parseMaskingRules(c.maskingRules === undefined ? undefined : JSON.stringify(c.maskingRules), `connection[${i}].maskingRules`),
                 description: c.description ? String(c.description) : undefined,
             };
         });
@@ -103,6 +177,18 @@ export function loadConnections() {
 }
 export function maxRowsLimit() {
     return loadConnections()[0].maxRows;
+}
+/**
+ * A per-call `maxRows` override can only LOWER the configured ceiling. Without
+ * this clamp a model (or injected text) could pass a huge value and defeat the
+ * result-size guard. Pure function so the governance rule is unit-testable.
+ */
+export function clampMaxRows(requested, configured) {
+    const effective = requested !== undefined && Number.isFinite(requested) && requested > 0
+        ? requested
+        : configured;
+    const limit = Math.min(effective, configured);
+    return { limit, clamped: effective > configured };
 }
 /**
  * Resolve which connection a tool call targets.

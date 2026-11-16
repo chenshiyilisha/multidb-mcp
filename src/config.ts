@@ -14,6 +14,24 @@
 
 export type DbType = 'dameng' | 'sqlserver' | 'mysql';
 
+/**
+ * A result-column masking rule. Column names are matched against `column`
+ * (a regular expression, tested case-insensitively). Values in matching
+ * columns are masked before they leave the server, on EVERY query shape
+ * (including SELECT *). This is the last line of defence against leaking
+ * PII / secrets to the model.
+ */
+export interface MaskingRule {
+  /** Regular expression matched against the result column name. */
+  column: string;
+  /** fixed -> constant value, null -> null, partial -> keep last N chars. */
+  strategy: 'fixed' | 'null' | 'partial';
+  /** Replacement for strategy=fixed (default '***'). */
+  value?: string;
+  /** Number of trailing chars to keep for strategy=partial (default 4). */
+  keepLast?: number;
+}
+
 export interface ConnectionConfig {
   name: string;
   type: DbType;
@@ -24,9 +42,25 @@ export interface ConnectionConfig {
   /** Dameng schema, or SQL Server database name. */
   schema: string;
   readOnly: boolean;
+  /**
+   * Fine-grained write permissions. Each flag gates exactly one statement
+   * type and only takes effect when readOnly is false. A write statement runs
+   * only when its matching flag is true; forbidden/unknown verbs are always
+   * rejected regardless of these flags.
+   */
+  allowInsert: boolean;
+  allowUpdate: boolean;
+  allowDelete: boolean;
+  allowDdl: boolean;
   maxRows: number;
   /** Hard query timeout in ms; 0 disables the JS-side timeout. */
   queryTimeoutMs: number;
+  /** Max serialized result size in bytes; 0 disables the byte cap. */
+  maxResultBytes: number;
+  /** Max SQL statement length in characters; 0 disables the check. */
+  maxQueryLength: number;
+  /** Column masking rules applied to every result set. */
+  maskingRules: MaskingRule[];
   description?: string;
 }
 
@@ -46,7 +80,57 @@ function parseIntSafe(v: string | undefined, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
+/** Timeouts accept an explicit 0 (disable the JS-side cap); other limits must be > 0. */
+function parseTimeout(v: string | undefined, fallback: number): number {
+  if (v === undefined || v === '') return fallback;
+  if (v.trim() === '0') return 0;
+  return parseIntSafe(v, fallback);
+}
+
 const DEFAULT_QUERY_TIMEOUT_MS = 30000;
+/** 1 MiB — generous for normal results, but stops a single BLOB from flooding the model context. */
+const DEFAULT_MAX_RESULT_BYTES = 1024 * 1024;
+/** Matches the 50,000-char convention used by production database MCP servers. */
+const DEFAULT_MAX_QUERY_LENGTH = 50000;
+
+/**
+ * Parse masking rules from a JSON string with fail-closed validation.
+ * An invalid regex / unknown strategy aborts config load rather than silently
+ * shipping unmasked data (the same fail-closed principle as SQL classification).
+ */
+function parseMaskingRules(raw: string | undefined, source: string): MaskingRule[] {
+  if (!raw || !raw.trim()) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    throw new Error(`${source} is not valid JSON: ${(e as Error).message}`);
+  }
+  if (!Array.isArray(parsed)) {
+    throw new Error(`${source} must be a JSON array of masking rules`);
+  }
+  return parsed.map((item, i) => {
+    const r = item as Record<string, unknown>;
+    const column = String(r.column ?? '');
+    if (!column) throw new Error(`${source}[${i}].column is required`);
+    const strategy = String(r.strategy ?? 'fixed');
+    if (strategy !== 'fixed' && strategy !== 'null' && strategy !== 'partial') {
+      throw new Error(`${source}[${i}].strategy must be "fixed", "null" or "partial" (got "${strategy}")`);
+    }
+    try {
+      new RegExp(column, 'i');
+    } catch (e) {
+      throw new Error(`${source}[${i}].column is not a valid regex: ${(e as Error).message}`);
+    }
+    const keepLast = r.keepLast === undefined ? 4 : parseIntSafe(String(r.keepLast), 4);
+    return {
+      column,
+      strategy: strategy as MaskingRule['strategy'],
+      value: r.value === undefined ? undefined : String(r.value),
+      keepLast,
+    };
+  });
+}
 
 function envConnection(name: string): ConnectionConfig {
   const type = (process.env.MULTIDB_DB_TYPE || 'dameng').toLowerCase() as DbType;
@@ -62,8 +146,20 @@ function envConnection(name: string): ConnectionConfig {
     password: process.env.MULTIDB_PASSWORD || '',
     schema: process.env.MULTIDB_SCHEMA || process.env.MULTIDB_DATABASE || '',
     readOnly: parseBool(process.env.MULTIDB_READ_ONLY, true),
+    allowInsert: parseBool(process.env.MULTIDB_ALLOW_INSERT, false),
+    allowUpdate: parseBool(process.env.MULTIDB_ALLOW_UPDATE, false),
+    allowDelete: parseBool(process.env.MULTIDB_ALLOW_DELETE, false),
+    allowDdl: parseBool(process.env.MULTIDB_ALLOW_DDL, false),
     maxRows: parseIntSafe(process.env.MULTIDB_MAX_ROWS, 1000),
-    queryTimeoutMs: parseIntSafe(process.env.MULTIDB_QUERY_TIMEOUT_MS, DEFAULT_QUERY_TIMEOUT_MS),
+    queryTimeoutMs: parseTimeout(process.env.MULTIDB_QUERY_TIMEOUT_MS, DEFAULT_QUERY_TIMEOUT_MS),
+    maxResultBytes: (() => {
+      const raw = process.env.MULTIDB_MAX_RESULT_BYTES;
+      if (raw === undefined || raw === '') return DEFAULT_MAX_RESULT_BYTES;
+      const n = Number.parseInt(raw, 10);
+      return Number.isFinite(n) && n >= 0 ? n : DEFAULT_MAX_RESULT_BYTES;
+    })(),
+    maxQueryLength: parseIntSafe(process.env.MULTIDB_MAX_QUERY_LENGTH, DEFAULT_MAX_QUERY_LENGTH),
+    maskingRules: parseMaskingRules(process.env.MULTIDB_MASKING_RULES, 'MULTIDB_MASKING_RULES'),
     description: process.env.MULTIDB_DESCRIPTION || undefined,
   };
 }
@@ -104,12 +200,22 @@ export function loadConnections(): ConnectionConfig[] {
         password: String(c.password || ''),
         schema: String(c.schema || c.database || ''),
         readOnly: parseBool(String(c.readOnly ?? ''), true),
+        allowInsert: parseBool(String(c.allowInsert ?? ''), false),
+        allowUpdate: parseBool(String(c.allowUpdate ?? ''), false),
+        allowDelete: parseBool(String(c.allowDelete ?? ''), false),
+        allowDdl: parseBool(String(c.allowDdl ?? ''), false),
         maxRows: parseIntSafe(String(c.maxRows ?? ''), 1000),
-        queryTimeoutMs: (() => {
-          const raw = String(c.queryTimeoutMs ?? '');
-          if (raw === '' || raw === '0') return DEFAULT_QUERY_TIMEOUT_MS;
-          return parseIntSafe(raw, DEFAULT_QUERY_TIMEOUT_MS);
+        queryTimeoutMs: parseTimeout(String(c.queryTimeoutMs ?? ''), DEFAULT_QUERY_TIMEOUT_MS),
+        maxResultBytes: (() => {
+          if (c.maxResultBytes === undefined || c.maxResultBytes === '') return DEFAULT_MAX_RESULT_BYTES;
+          const n = Number.parseInt(String(c.maxResultBytes), 10);
+          return Number.isFinite(n) && n >= 0 ? n : DEFAULT_MAX_RESULT_BYTES;
         })(),
+        maxQueryLength: parseIntSafe(String(c.maxQueryLength ?? ''), DEFAULT_MAX_QUERY_LENGTH),
+        maskingRules: parseMaskingRules(
+          c.maskingRules === undefined ? undefined : JSON.stringify(c.maskingRules),
+          `connection[${i}].maskingRules`
+        ),
         description: c.description ? String(c.description) : undefined,
       };
     });
@@ -127,6 +233,22 @@ export function loadConnections(): ConnectionConfig[] {
 
 export function maxRowsLimit(): number {
   return loadConnections()[0].maxRows;
+}
+
+/**
+ * A per-call `maxRows` override can only LOWER the configured ceiling. Without
+ * this clamp a model (or injected text) could pass a huge value and defeat the
+ * result-size guard. Pure function so the governance rule is unit-testable.
+ */
+export function clampMaxRows(
+  requested: number | undefined,
+  configured: number
+): { limit: number; clamped: boolean } {
+  const effective = requested !== undefined && Number.isFinite(requested) && requested > 0
+    ? requested
+    : configured;
+  const limit = Math.min(effective, configured);
+  return { limit, clamped: effective > configured };
 }
 
 /**

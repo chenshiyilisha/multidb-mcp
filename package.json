@@ -1,7 +1,8 @@
 {
   "name": "multidb-mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Lightweight MCP server for Dameng (DM8), SQL Server and MySQL databases",
+  "mcpName": "io.github.chenshiyilisha/multidb-mcp",
   "type": "module",
   "license": "MIT",
   "main": "./build/index.js",
@@ -34,6 +35,10 @@
     "smoke": "node tests/smoke.mjs",
     "test:unit": "node tests/unit.mjs",
     "test:db": "node tests/test_db.mjs",
+    "test:perm": "node tests/permissions.mjs",
+    "test:enh": "node tests/enhancements.mjs",
+    "test:hard": "node tests/hardening.mjs",
+    "test:prim": "node tests/primitives.mjs",
     "prepublishOnly": "npm run build"
   },
   "engines": {
