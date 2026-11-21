@@ -3,7 +3,7 @@
   "name": "io.github.chenshiyilisha/multidb-mcp",
   "title": "MultiDB MCP",
   "description": "MCP server for Dameng (DM8), SQL Server, and MySQL — read-only by default, granular write perms",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "websiteUrl": "https://github.com/chenshiyilisha/multidb-mcp",
   "repository": {
     "url": "https://github.com/chenshiyilisha/multidb-mcp",
@@ -14,7 +14,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "multidb-mcp",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "transport": {
         "type": "stdio"
       },

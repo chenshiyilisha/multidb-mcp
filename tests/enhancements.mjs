@@ -103,6 +103,15 @@ try {
   check('execute_sql exposes annotations', !!execTool?.annotations, JSON.stringify(execTool?.annotations));
   check('execute_sql is NOT marked readOnlyHint', execTool?.annotations?.readOnlyHint === false);
   check('test_connection IS marked readOnlyHint', byName['test_connection']?.annotations?.readOnlyHint === true);
+  // MCP spec / OpenAI directory require all FOUR hints, each an explicit boolean.
+  // A third-party scanner once reported these missing because it only read the
+  // source constants, not the wire format — assert the wire format instead.
+  const HINTS = ['readOnlyHint', 'destructiveHint', 'idempotentHint', 'openWorldHint'];
+  const incomplete = (tools.result?.tools || []).filter(
+    (t) => HINTS.some((h) => typeof t.annotations?.[h] !== 'boolean')
+  );
+  check('all tools expose all four boolean hints', incomplete.length === 0,
+    incomplete.map((t) => t.name).join(', ') || 'none missing');
 
   // 2. isError on a policy rejection (no DB needed — fail-fast before connect)
   const denied = await callTool('execute_sql', { sql: 'DELETE FROM users' });

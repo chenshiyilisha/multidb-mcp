@@ -1,6 +1,6 @@
 {
   "name": "multidb-mcp",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Lightweight MCP server for Dameng (DM8), SQL Server and MySQL databases",
   "mcpName": "io.github.chenshiyilisha/multidb-mcp",
   "type": "module",
@@ -49,7 +49,7 @@
     "dmdb": "^1.0.0",
     "mssql": "^11.0.0",
     "mysql2": "^3.24.6",
-    "zod": "^3.23.8"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/mssql": "^12.3.0",
