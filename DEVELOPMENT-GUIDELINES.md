@@ -313,7 +313,8 @@
    - 判据：`npm whoami` 返回 `E401` 即令牌失效。修法只有一条：`npm login`（回车 → 浏览器 → 安全密钥/passkey，看到 `Logged in on https://registry.npmjs.org/.`）→ 再 `npm publish`。发布过程若再次停在 `Press ENTER to open in the browser...`，照做即可（最多两次 passkey 确认）。
    - 依据：npm 官方 `otplease` 行为 + 社区实测复盘（dev.to「Three gates before your first npm publish」、GitHub community discussion #184393、skillmd npm-publish 事故日志），多来源一致确认「E404 on PUT = stale auth, re-auth fixes it」。
 2. **GitHub**：提交推送（本机 SSH 22 不通，origin 已切 HTTPS + gh 凭据助手）；如有 Release 需求再打 tag。
-3. **官方 MCP Registry**（registry.modelcontextprotocol.io）：同步升 `server.json` 的 `version` 和 `packages[0].version`（必须与 npm 版本一致，版本号不可复用）→ `.tools/mcp-publisher.exe login github --token "$(gh auth token)"`（token 会过期，每次发布前重新登录）→ `.tools/mcp-publisher.exe publish`。发布后用 `curl "https://registry.modelcontextprotocol.io/v0/servers/io.github.chenshiyilisha/multidb-mcp"` 验证。
+3. **官方 MCP Registry**（registry.modelcontextprotocol.io）：同步升 `server.json` 的 `version` 和 `packages[0].version`（必须与 npm 版本一致，版本号不可复用）→ `.tools/mcp-publisher.exe validate server.json` → `.tools/mcp-publisher.exe login github --token "$(gh auth token)"`（JWT 每次发布前都要重新登录）→ `.tools/mcp-publisher.exe publish`。
+   - ⚠️ **验证方式**：`GET /v0/servers/<id>` 与 `/v0/servers/<id>/versions` **都是无效端点（404 Endpoint not found）**，不要用。正确做法：`curl -s "https://registry.modelcontextprotocol.io/v0/servers?search=multidb-mcp"`——同一 server **每个版本各返回一条**，靠 `_meta.io.modelcontextprotocol.registry/official.isLatest` 区分；必须确认存在一条 `version == 目标版本` 且 `isLatest == true` 才算发布成功。只截取响应开头（`head -c 500`）会先看到旧版本记录，容易误判成"没更新"（2026-11-21 发 0.2.1 时实测踩过）。
 
 下游目录（PulseMCP、Glama、Kiprio、GitHub MCP Registry 等）从官方 Registry 和 GitHub topics 自动同步，**不需要逐个提交**；Smithery 已于 2026-10-31 关闭提交通道，不要再花时间。
 
