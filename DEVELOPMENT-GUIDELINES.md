@@ -307,7 +307,11 @@
 
 本项目同时发布三个渠道，顺序固定，缺一不可：
 
-1. **npm**：`package.json` 升版本（`version` + `mcpName` 必须保留，`mcpName` 是官方 Registry 的所有权校验依据，值固定为 `io.github.chenshiyilisha/multidb-mcp`）→ 用户本人在自己终端跑 `npm publish`（2FA 必须本人操作，AI 沙箱内跑不了）。
+1. **npm**：`package.json` 升版本（`version` + `mcpName` 必须保留，`mcpName` 是官方 Registry 的所有权校验依据，值固定为 `io.github.chenshiyilisha/multidb-mcp`）→ **先跑 `npm run check:auth`**（内部执行 `npm whoami`）→ 用户本人在自己终端跑 `npm publish`（2FA 必须本人操作，AI 沙箱内跑不了）。
+   - ⚠️ **令牌会过期**：npm 11 的 web-login session token 是短期的，且会自动回收长期/不安全 token，隔几天就可能失效（2026-11-21 发 0.2.1 时实测：距上次发布 5 天即失效）。
+   - ⚠️ **失效时的报错是伪装的**：`npm publish` 会报 `E404 - PUT https://registry.npmjs.org/multidb-mcp - Not found` / `could not be found or you do not have permission`，**不是 401**。npm 故意把权限错误伪装成 404。此时 `GET` 包元数据仍是 200、包名/版本/registry 全对，**不要去查包名冲突或版本号**，也不要清缓存。
+   - 判据：`npm whoami` 返回 `E401` 即令牌失效。修法只有一条：`npm login`（回车 → 浏览器 → 安全密钥/passkey，看到 `Logged in on https://registry.npmjs.org/.`）→ 再 `npm publish`。发布过程若再次停在 `Press ENTER to open in the browser...`，照做即可（最多两次 passkey 确认）。
+   - 依据：npm 官方 `otplease` 行为 + 社区实测复盘（dev.to「Three gates before your first npm publish」、GitHub community discussion #184393、skillmd npm-publish 事故日志），多来源一致确认「E404 on PUT = stale auth, re-auth fixes it」。
 2. **GitHub**：提交推送（本机 SSH 22 不通，origin 已切 HTTPS + gh 凭据助手）；如有 Release 需求再打 tag。
 3. **官方 MCP Registry**（registry.modelcontextprotocol.io）：同步升 `server.json` 的 `version` 和 `packages[0].version`（必须与 npm 版本一致，版本号不可复用）→ `.tools/mcp-publisher.exe login github --token "$(gh auth token)"`（token 会过期，每次发布前重新登录）→ `.tools/mcp-publisher.exe publish`。发布后用 `curl "https://registry.modelcontextprotocol.io/v0/servers/io.github.chenshiyilisha/multidb-mcp"` 验证。
 
@@ -335,6 +339,7 @@
 | 6b | 审计与凭据 | 调用留痕、密码不外泄、敏感值不进日志 |
 | 7 | 有问题就修 | 发现问题必须修复并回归验证，不搁置不绕过 |
 | 8 | 验证要深 | 行为断言 + 负对照，四层测试按场景补齐 |
+| 8a | 发布前验令牌 | `npm run check:auth`；publish 报 E404 先 `npm login`，别查包名 |
 | 9 | 按最优执行 | 调研后选最优方案，符合契约与信创边界 |
 | 9a | 多轮开源借鉴 | 多轮深度挖掘、先查证有场景再引入、落地标注依据 |
 | 9b | 无场景不引入 | 鉴权/OAuth/HTTP 等本地 stdio 无场景能力不引入 |

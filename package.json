@@ -39,6 +39,7 @@
     "test:enh": "node tests/enhancements.mjs",
     "test:hard": "node tests/hardening.mjs",
     "test:prim": "node tests/primitives.mjs",
+    "check:auth": "node scripts/check-auth.mjs",
     "prepublishOnly": "npm run build"
   },
   "engines": {
